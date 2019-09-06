@@ -45,7 +45,6 @@ setuptools.setup(
         "opentelemetry-api==0.1.dev0",
         "opentelemetry-sdk==0.1.dev0",
         "typing; python_version<'3.5'",
-        "basictracer>=3.0,<4",
     ],
     extras_require={},
     license="Apache-2.0",

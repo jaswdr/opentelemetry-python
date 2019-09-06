@@ -13,43 +13,56 @@
 # limitations under the License.
 
 
-from basictracer.span import BasicSpan
+from threading import Lock
+import time
 
 from opentelemetry import trace as trace_api
 from opentelemetry.sdk.trace import Span as OtelSpan
 
+from .context import BridgeSpanContext
 
-class BridgeSpan(BasicSpan):
+
+class BridgeSpan():
     def __init__(
         self,
-        tracer,
-        operation_name=None,
-        context=None,
-        parent_id=None,
-        tags=None,
-        start_time=None,
-        otel_parent=None,
+        otel_context,
+        otel_span,
     ):
-        super(BridgeSpan, self).__init__(
-            tracer, operation_name, context, parent_id, tags, start_time
-        )
+        self._lock = Lock()
+        self.logs = []
 
-        otel_context = trace_api.SpanContext(context.trace_id, context.span_id)
-        if otel_parent is None:
-            otel_parent = trace_api.SpanContext(context.trace_id, parent_id)
-        otel_tags = tags
+        self._context = BridgeSpanContext(otel_context=otel_context)
+        self.otel_span = otel_span
 
-        self.otel_span = OtelSpan(
-            name=operation_name,
-            context=otel_context,
-            parent=otel_parent,
-            attributes=otel_tags,
-        )
+    @property
+    def context(self):
+        return self._context
 
     def set_operation_name(self, operation_name):
-        super(BridgeSpan, self).set_operation_name(operation_name)
         self.otel_span.update_name(operation_name)
 
     def set_tag(self, key, value):
-        super(BridgeSpan, self).set_tag(key, value)
         self.otel_span.set_attribute(key, value)
+
+    def log_event(self, event, payload=None):
+        """DEPRECATED"""
+        if payload is None:
+            return self.log_kv({'event': event})
+        else:
+            return self.log_kv({'event': event, 'payload': payload})
+
+    def log_kv(self, key_values, timestamp=None):
+        with self._lock:
+            self.logs.append((key_values, time.time() if timestamp is None else timestamp))
+        return self
+
+    def finish(self, finish_time=None):
+        pass  # FIXME
+
+    def set_baggage_item(self, key, value):
+        # FIXME
+        return self
+
+    def get_baggage_item(self, key):
+        # FIXME
+        return None

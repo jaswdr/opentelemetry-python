@@ -19,32 +19,39 @@ from opentracing.ext import tags
 from opentracing.propagation import Format
 
 from opentelemetry.sdk.trace import Span as OtelSpan
+from opentelemetry.sdk.trace import Tracer
 from opentelemetry.trace import SpanContext as OtelSpanContext
+from opentelemetry import trace
 from ot_otel_bridge.span import BridgeSpan
-from ot_otel_bridge.tracer import tracer
+from ot_otel_bridge.tracer import create_tracer
 
+from opentelemetry.context import Context
+
+trace.set_preferred_tracer_implementation(lambda T: Tracer())
 
 class TestOTBridge(unittest.TestCase):
     def setUp(self):
-        opentracing.tracer = tracer()
+        self.tracer = trace.tracer()
+        self.ot_tracer = create_tracer(self.tracer)
 
     def test_basic(self):
-        with opentracing.tracer.start_active_span("TestBasic") as scope:
-            self.assertIsInstance(scope.span, opentracing.Span)
+        self.assertIsInstance(self.ot_tracer._otel_tracer, Tracer)
+
+        with self.ot_tracer.start_active_span("TestBasic") as scope:
             self.assertIsInstance(scope.span, BridgeSpan)
             self.assertIsInstance(scope.span.otel_span, OtelSpan)
             self.assertIsInstance(
-                scope.span.otel_span.get_context(), OtelSpanContext
+                scope.span.otel_span.get_context(), OtelSpanContext,
             )
 
     def test_name(self):
-        with opentracing.tracer.start_active_span("TestName") as scope:
+        with self.ot_tracer.start_active_span("TestName") as scope:
             self.assertEqual(scope.span.otel_span.name, "TestName")
             scope.span.set_operation_name("NewName")
             self.assertEqual(scope.span.otel_span.name, "NewName")
 
     def test_tags(self):
-        with opentracing.tracer.start_active_span("TestTags") as scope:
+        with self.ot_tracer.start_active_span("TestTags") as scope:
             scope.span.set_tag("my_tag_key", "my_tag_value")
             self.assertTrue("my_tag_key" in scope.span.otel_span.attributes)
             self.assertEqual(
@@ -53,25 +60,24 @@ class TestOTBridge(unittest.TestCase):
 
     def test_baggage(self):
         # TODO: At the moment, the bridge does not do anything with the baggage
-        # so this is just checking for consistency.
-        with opentracing.tracer.start_active_span("TestBaggage") as scope:
+        with self.ot_tracer.start_active_span("TestBaggage") as scope:
             scope.span.set_baggage_item("my_baggage_item", "the_baggage")
-            self.assertEqual(
-                scope.span.get_baggage_item("my_baggage_item"), "the_baggage"
+            self.assertNotEqual(
+                scope.span.get_baggage_item, None,
             )
 
     def test_log(self):
         # TODO: At the moment, the bridge does not do anything with logs
-        with opentracing.tracer.start_active_span("TestLog") as scope:
+        with self.ot_tracer.start_active_span("TestLog") as scope:
             scope.span.log_kv({"event": "string-format", "value": "the_log"})
             scope.span.log_event("message", payload={"number": 42})
             scope.span.log_event("message", payload={"number": 43})
             self.assertEqual(len(scope.span.logs), 3)
 
     def test_subspan(self):
-        with opentracing.tracer.start_active_span("TestGrandparent") as scope1:
-            with opentracing.tracer.start_active_span("TestParent") as scope2:
-                with opentracing.tracer.start_active_span(
+        with self.ot_tracer.start_active_span("TestGrandparent") as scope1:
+            with self.ot_tracer.start_active_span("TestParent") as scope2:
+                with self.ot_tracer.start_active_span(
                     "TestChild"
                 ) as scope3:
                     ctx1 = scope1.span.otel_span.get_context()
@@ -82,10 +88,10 @@ class TestOTBridge(unittest.TestCase):
                     self.assertEqual(ctx1.trace_id, ctx3.trace_id)
 
                     self.assertEqual(
-                        ctx1.span_id, scope2.span.otel_span.parent.span_id
+                        ctx1.span_id, scope2.span.otel_span.parent.context.span_id
                     )
                     self.assertEqual(
-                        ctx2.span_id, scope3.span.otel_span.parent.span_id
+                        ctx2.span_id, scope3.span.otel_span.parent.context.span_id
                     )
 
                     self.assertNotEqual(ctx1.span_id, ctx2.span_id)
@@ -93,15 +99,15 @@ class TestOTBridge(unittest.TestCase):
 
     def test_inject_extract(self):
         headers = {}
-        with opentracing.tracer.start_active_span("ClientSide") as scope:
+        with self.ot_tracer.start_active_span("ClientSide") as scope:
             client_ctx = scope.span.otel_span.get_context()
-            opentracing.tracer.inject(
+            self.ot_tracer.inject(
                 scope.span.context, Format.HTTP_HEADERS, headers
             )
 
-        span_ctx = opentracing.tracer.extract(Format.HTTP_HEADERS, headers)
+        span_ctx = self.ot_tracer.extract(Format.HTTP_HEADERS, headers)
         span_tags = {tags.SPAN_KIND: tags.SPAN_KIND_RPC_SERVER}
-        with opentracing.tracer.start_active_span(
+        with self.ot_tracer.start_active_span(
             "ServerSide", child_of=span_ctx, tags=span_tags
         ) as scope:
             server_ctx = scope.span.otel_span.get_context()

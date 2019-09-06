@@ -20,30 +20,27 @@ OpenTelemetry API.
 
 import time
 
-import opentracing
-from basictracer import BasicTracer
-from basictracer.context import SpanContext
-from basictracer.text_propagator import TextPropagator
-from basictracer.util import generate_id
-from opentracing.propagation import Format
+from opentelemetry.context.propagation import HTTPTextFormat
+
+# FIXME: don't hardcode the choice of b3
+import opentelemetry.sdk.context.propagation.b3_format as b3_format
 
 from .span import BridgeSpan
+from .scope import BridgeScope
+from .context import BridgeSpanContext
 
 
-def tracer(**kwargs):  # pylint: disable=unused-argument
-    return _BridgeTracer()
+def create_tracer(otel_tracer):
+    return _BridgeTracer(otel_tracer=otel_tracer)
 
 
-class _BridgeTracer(BasicTracer):
-    def __init__(self):
+class _BridgeTracer():
+    def __init__(self, otel_tracer):
         """Initialize the bridge Tracer."""
-        super(_BridgeTracer, self).__init__(recorder=None, scope_manager=None)
-        self.register_propagator(Format.TEXT_MAP, TextPropagator())
-        self.register_propagator(Format.HTTP_HEADERS, TextPropagator())
+        self._otel_tracer = otel_tracer
 
-    # code for start_active_span() and start_span() inspired from the base
-    # class BasicTracer from basictracer-python (Apache 2.0) and adapted:
-    # https://github.com/opentracing/basictracer-python/blob/96ebe40eabd83f9976e71b8e5c6f20ded2e57df3/basictracer/tracer.py#L51
+        # FIXME: don't hardcode the choice of b3
+        self.propagator = b3_format.B3Format()
 
     def start_active_span(
         self,
@@ -55,19 +52,52 @@ class _BridgeTracer(BasicTracer):
         ignore_active_span=False,
         finish_on_close=True,
     ):
-        # Do not call super(): we want to call start_span() in this subclass.
+        parent=None
+        if isinstance(child_of, BridgeSpan):
+            parent=child_of.otel_span
+        elif isinstance(child_of, BridgeSpanContext):
+            parent=child_of.otel_context
 
-        # create a new Span
+        if not ignore_active_span and parent is None:
+            parent = self._otel_tracer.get_current_span()
+
+        # # FIXME: cannot use start_span: cannot yield scope without breaking
+        # # the OpenTracing API :-(
+        # # Unless there is a smart way that I don't see?
+        # # Too bad, the code below was working, except that the parent-child
+        # # relationship was broken. So instead, I use another hack
+        # # see (other FIXME below)
+
+        # with self._otel_tracer.start_span(
+        #     name=operation_name,
+        #     parent=parent,
+        # ) as otel_span:
+        #     otel_context = otel_span.get_context()
+        #
+        #     span = BridgeSpan(
+        #         otel_span=otel_span,
+        #         otel_context=otel_context,
+        #     )
+        #
+        #     scope = BridgeScope(span)
+        #     return scope
+
         span = self.start_span(
-            operation_name=operation_name,
-            child_of=child_of,
-            references=references,
-            tags=tags,
-            start_time=start_time,
-            ignore_active_span=ignore_active_span,
+            operation_name,
+            child_of,
+            references,
+            tags,
+            start_time,
+            ignore_active_span,
         )
 
-        return self.scope_manager.activate(span, finish_on_close)
+        span.otel_span.start()
+        # FIXME: hack! hack!
+        span_snapshot = self._otel_tracer._current_span_slot.get()
+        self._otel_tracer._current_span_slot.set(span.otel_span)
+
+        scope = BridgeScope(self._otel_tracer, span, span_snapshot)
+        return scope
 
     def start_span(
         self,
@@ -78,58 +108,46 @@ class _BridgeTracer(BasicTracer):
         start_time=None,
         ignore_active_span=False,
     ):
-        # Do not call super(): create a BridgeSpan instead
+        parent=None
+        if isinstance(child_of, BridgeSpan):
+            parent=child_of.otel_span
+        elif isinstance(child_of, BridgeSpanContext):
+            parent=child_of.otel_context
 
-        start_time = time.time() if start_time is None else start_time
+        if not ignore_active_span and parent is None:
+            parent = self._otel_tracer.get_current_span()
 
-        # pylint: disable=len-as-condition
+        otel_span = self._otel_tracer.create_span(
+            name=operation_name,
+            parent=parent,
+        )
+        otel_context = otel_span.get_context()
 
-        # See if we have a parent_ctx in `references`
-        parent_ctx = None
-        if child_of is not None:
-            parent_ctx = (
-                child_of
-                if isinstance(child_of, opentracing.SpanContext)
-                else child_of.context
-            )
-        elif references is not None and len(references) > 0:
-            # TODO only the first reference is currently used
-            parent_ctx = references[0].referenced_context
-
-        # retrieve the active SpanContext
-        if not ignore_active_span and parent_ctx is None:
-            scope = self.scope_manager.active
-            if scope is not None:
-                parent_ctx = scope.span.context
-
-        # Assemble the child ctx
-        ctx = SpanContext(span_id=generate_id())
-        if parent_ctx is not None:
-            # pylint: disable=protected-access
-            if parent_ctx._baggage is not None:
-                ctx._baggage = parent_ctx._baggage.copy()
-            ctx.trace_id = parent_ctx.trace_id
-            ctx.sampled = parent_ctx.sampled
-        else:
-            ctx.trace_id = generate_id()
-            ctx.sampled = self.sampler.sampled(ctx.trace_id)
-
-        otel_parent = None
-        if isinstance(child_of, opentracing.Span) and hasattr(
-            child_of, "otel_span"
-        ):
-            otel_parent = child_of.otel_span
-
-        # Tie it all together
         return BridgeSpan(
-            self,
-            operation_name=operation_name,
-            context=ctx,
-            parent_id=(None if parent_ctx is None else parent_ctx.span_id),
-            tags=tags,
-            start_time=start_time,
-            otel_parent=otel_parent,
+            otel_span=otel_span,
+            otel_context=otel_context,
         )
 
-    def __enter__(self):
-        return self
+    def inject(self, span_context, format, carrier):
+        if format != "http_headers":
+            raise Exception("TODO: inject: " + str(format))
+            return
+
+        self.propagator.inject(
+            span_context.otel_context,
+            dict.__setitem__,
+            carrier,
+        )
+
+    def extract(self, format, carrier):
+        if format != "http_headers":
+            raise Exception("TODO: extract: " + str(format))
+            return
+
+        def get_as_list(dict_object, key):
+            value = dict_object.get(key)
+            return [value] if value is not None else []
+
+        otel_span_context = self.propagator.extract(get_as_list, carrier)
+
+        return BridgeSpanContext(otel_span_context)
