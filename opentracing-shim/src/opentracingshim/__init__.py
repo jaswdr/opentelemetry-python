@@ -134,6 +134,9 @@ class ScopeManagerWrapper(opentracing.ScopeManager):
         span = self._tracer.get_current_span()
         wrapped_span = SpanWrapper(self._tracer, span.get_context(), span)
         return ScopeWrapper(self, wrapped_span)
+        # TODO: Return a saved instance of SpanWrapper instead of constructing
+        # a new object (and the same for ScopeWrapper?).
+        # https://github.com/open-telemetry/opentelemetry-python/issues/161#issuecomment-534136274
 
 
 class TracerWrapper(opentracing.Tracer):
@@ -157,6 +160,9 @@ class TracerWrapper(opentracing.Tracer):
         if span is None:
             return None
         return SpanWrapper(self, span.get_context(), span)
+        # TODO: Return a saved instance of SpanWrapper instead of constructing
+        # a new object.
+        # https://github.com/open-telemetry/opentelemetry-python/issues/161#issuecomment-534136274
 
     @contextmanager
     def start_active_span(
@@ -189,7 +195,9 @@ class TracerWrapper(opentracing.Tracer):
         start_time=None,
         ignore_active_span=False,
     ) -> SpanWrapper:
-        # TODO: Handle optional arguments.
+        # TODO: Handle `references` argument.
+        # TODO: Handle `tags` argument.
+        # TODO: Handle `start_time` argument.
         parent = child_of
         if parent is not None:
             if isinstance(parent, SpanWrapper):
