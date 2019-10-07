@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import typing
+
 from contextlib import contextmanager
 
 import opentracing
@@ -199,13 +201,17 @@ class TracerWrapper(opentracing.Tracer):
 
     def start_span(
         self,
-        operation_name=None,
-        child_of=None,
-        references=None,
-        tags=None,
-        start_time=None,
-        ignore_active_span=False,
+        operation_name: typing.Optional[str] = None,
+        child_of: typing.Optional[object] = None,
+        references: typing.Optional[typing.List[object]] = None,
+        tags: typing.Optional[typing.Dict[str, str]] = None,
+        start_time: typing.Optional[float] = None,
+        ignore_active_span: typing.Optional[bool] = False,
     ) -> SpanWrapper:
+        # TODO: We cannot use types from `opentracing` as a type hint since the
+        # library doesn't include type hints, which makes it unusable with
+        # Mypy. More info:
+        # https://mypy.readthedocs.io/en/latest/running_mypy.html#missing-imports
         parent = child_of
         if parent is not None:
             if isinstance(parent, SpanWrapper):
@@ -241,20 +247,27 @@ class TracerWrapper(opentracing.Tracer):
         # The OpenTracing API expects time values to be `float` values which
         # represent the number of seconds since the epoch. OpenTelemetry
         # represents time values as nanoseconds since the epoch.
-        start_time_ns = start_time
-        if start_time_ns is not None:
+        if start_time is None:
+            start_time_ns = None
+        else:
             start_time_ns = util.time_seconds_to_ns(start_time)
 
         span.start(start_time=start_time_ns)
         context = SpanContextWrapper(span.get_context())
         return SpanWrapper(self, context, span)
 
-    def inject(self, span_context, format, carrier):
+    def inject(
+        self, span_context: object, format: str, carrier: object
+    ) -> None:
+        # TODO: We cannot use types from `opentracing` as a type hint since the
+        # library doesn't include type hints, which makes it unusable with
+        # Mypy. More info:
+        # https://mypy.readthedocs.io/en/latest/running_mypy.html#missing-imports
         # pylint: disable=redefined-builtin
         pass
         # TODO: Implement.
 
-    def extract(self, format, carrier):
+    def extract(self, format: str, carrier: object) -> SpanContextWrapper:
         # pylint: disable=redefined-builtin
         pass
         # TODO: Implement.

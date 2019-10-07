@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import time
+import typing
 
 try:
     time_ns = time.time_ns
 # Python versions < 3.7
 except AttributeError:
 
-    def time_ns():
+    def time_ns() -> int:
         return int(time.time() * 1e9)
 
 
@@ -54,7 +55,7 @@ def time_seconds_from_ns(time_nanoseconds: int) -> float:
     return time_nanoseconds / 1e9
 
 
-def event_name_from_kv(key_values: dict) -> str:
+def event_name_from_kv(key_values: typing.Dict[str, object]) -> str:
     """A helper function which returns an event name from the given dict, or a
     default event name.
     """
@@ -62,4 +63,4 @@ def event_name_from_kv(key_values: dict) -> str:
     if key_values is None or "event" not in key_values:
         return DEFAULT_EVENT_NAME
 
-    return key_values["event"]
+    return str(key_values["event"])
