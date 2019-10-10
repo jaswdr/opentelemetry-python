@@ -120,7 +120,10 @@ class ScopeManagerWrapper(opentracing.ScopeManager):
 
     @property
     def active(self):
-        span = self._tracer.get_current_span()
+        span = self._tracer.unwrap().get_current_span()
+        if span is None:
+            return None
+
         wrapped_span = SpanWrapper(self._tracer, span.get_context(), span)
         return ScopeWrapper(self, wrapped_span)
         # TODO: Return a saved instance of SpanWrapper instead of constructing
@@ -142,16 +145,6 @@ class TracerWrapper(opentracing.Tracer):
         """Returns the wrapped OpenTelemetry `Tracer` object."""
 
         return self._otel_tracer
-
-    @property
-    def active_span(self):
-        span = self._otel_tracer.get_current_span()
-        if span is None:
-            return None
-        return SpanWrapper(self, span.get_context(), span)
-        # TODO: Return a saved instance of SpanWrapper instead of constructing
-        # a new object.
-        # https://github.com/open-telemetry/opentelemetry-python/issues/161#issuecomment-534136274
 
     @contextmanager
     def start_active_span(
