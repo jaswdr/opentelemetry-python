@@ -200,7 +200,7 @@ class TracerShim(opentracing.Tracer):
         start_time=None,
         ignore_active_span=False,
         finish_on_close=True,
-    ):
+    ) -> opentracing.Scope:
         span = self.start_span(
             operation_name=operation_name,
             child_of=child_of,
