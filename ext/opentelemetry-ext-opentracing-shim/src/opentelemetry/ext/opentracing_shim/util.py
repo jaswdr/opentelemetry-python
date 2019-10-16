@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Dict, Union
+
 # A default event name to be used for logging events when a better event name
 # can't be derived from the event's key-value pairs.
-DEFAULT_EVENT_NAME = "log"
+DEFAULT_EVENT_NAME: str = "log"
 
 
-def time_seconds_to_ns(time_seconds):
+def time_seconds_to_ns(time_seconds: float) -> int:
     """Converts a time value in seconds to a time value in nanoseconds.
 
     `time_seconds` is a `float` as returned by `time.time()` which represents
@@ -30,7 +32,7 @@ def time_seconds_to_ns(time_seconds):
     return int(time_seconds * 1e9)
 
 
-def time_seconds_from_ns(time_nanoseconds):
+def time_seconds_from_ns(time_nanoseconds: int) -> float:
     """Converts a time value in nanoseconds to a time value in seconds.
 
     `time_nanoseconds` is an `int` representing the number of nanoseconds since
@@ -43,7 +45,7 @@ def time_seconds_from_ns(time_nanoseconds):
     return time_nanoseconds / 1e9
 
 
-def event_name_from_kv(key_values):
+def event_name_from_kv(key_values: Dict[str, Union[str, bool, float]]) -> str:
     """A helper function which returns an event name from the given dict, or a
     default event name.
     """
@@ -51,4 +53,4 @@ def event_name_from_kv(key_values):
     if key_values is None or "event" not in key_values:
         return DEFAULT_EVENT_NAME
 
-    return key_values["event"]
+    return str(key_values["event"])
