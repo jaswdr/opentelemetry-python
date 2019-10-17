@@ -169,7 +169,8 @@ class ScopeManagerShim(opentracing.ScopeManager):
         if span is None:
             return None
 
-        wrapped_span = SpanShim(self._tracer, span.get_context(), span)
+        span_context = SpanContextShim(span.get_context())
+        wrapped_span = SpanShim(self._tracer, span_context, span)
         return ScopeShim(self, span=wrapped_span)
         # TODO: Return a saved instance of SpanShim instead of constructing
         # a new object (and the same for ScopeShim?).
