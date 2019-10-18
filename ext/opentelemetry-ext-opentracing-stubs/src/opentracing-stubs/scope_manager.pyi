@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import scope, scope_manager, span, tracer
+from opentracing import Scope, Span
 
-Scope = scope.Scope
-ScopeManager = scope_manager.ScopeManager
-Span = span.Span
-SpanContext = span.SpanContext
-Tracer = tracer.Tracer
+class ScopeManager(object):
+    def __init__(self) -> None: ...
+    def activate(self, span: Span, finish_on_close: bool) -> Scope: ...
+    @property
+    def active(self) -> Scope: ...

@@ -14,84 +14,97 @@
 
 import logging
 
+from typing import ContextManager, Dict, Iterator, List, Optional, Union
+
 import opentracing
 
+from opentelemetry import trace
 from opentelemetry.ext.opentracing_shim import util
 
 logger = logging.getLogger(__name__)
 
 
-def create_tracer(tracer):
-    return TracerShim(tracer)
-
-
 class SpanContextShim(opentracing.SpanContext):
-    def __init__(self, otel_context):
+    def __init__(self, otel_context: trace.SpanContext):
         self._otel_context = otel_context
 
-    def unwrap(self):
+    def unwrap(self) -> trace.SpanContext:
         """Returns the wrapped OpenTelemetry `SpanContext` object."""
 
         return self._otel_context
 
     @property
-    def baggage(self):
+    def baggage(self) -> Dict[str, str]:
         logger.warning(
             "Using unimplemented property baggage on class %s.",
             self.__class__.__name__,
         )
+        return {}
         # TODO: Implement.
 
 
 class SpanShim(opentracing.Span):
-    def __init__(self, tracer, context, span):
+    def __init__(
+        self,
+        tracer: opentracing.Tracer,
+        context: opentracing.SpanContext,
+        span: trace.Span,
+    ) -> None:
         super().__init__(tracer, context)
         self._otel_span = span
 
-    def unwrap(self):
+    def unwrap(self) -> trace.Span:
         """Returns the wrapped OpenTelemetry `Span` object."""
 
         return self._otel_span
 
-    def set_operation_name(self, operation_name):
+    def set_operation_name(self, operation_name: str) -> "SpanShim":
         self._otel_span.update_name(operation_name)
 
         return self
 
-    def finish(self, finish_time=None):
-        end_time = finish_time
-        if end_time is not None:
+    def finish(self, finish_time: Optional[float] = None) -> None:
+        if finish_time is None:
+            end_time = None
+        else:
             end_time = util.time_seconds_to_ns(finish_time)
         self._otel_span.end(end_time=end_time)
 
-    def set_tag(self, key, value):
+    def set_tag(
+        self, key: str, value: Union[str, bool, int, float]
+    ) -> "SpanShim":
         self._otel_span.set_attribute(key, value)
 
         return self
 
-    def log_kv(self, key_values, timestamp=None):
-        if timestamp is not None:
-            event_timestamp = util.time_seconds_to_ns(timestamp)
-        else:
+    def log_kv(
+        self,
+        key_values: Dict[str, Union[str, bool, float]],
+        timestamp: float = None,
+    ) -> "SpanShim":
+        if timestamp is None:
             event_timestamp = None
-
+        else:
+            event_timestamp = util.time_seconds_to_ns(timestamp)
         event_name = util.event_name_from_kv(key_values)
         self._otel_span.add_event(event_name, event_timestamp, key_values)
 
         return self
 
-    def set_baggage_item(self, key, value):
+    def set_baggage_item(self, key: str, value: str) -> "SpanShim":
         logger.warning(
             "Calling unimplemented method set_baggage_item() on class %s",
             self.__class__.__name__,
         )
+        return None  # type: ignore
         # TODO: Implement.
 
-    def get_baggage_item(self, key):
+    def get_baggage_item(self, key: str) -> str:
         logger.warning(
             "Calling unimplemented method get_baggage_item() on class %s",
             self.__class__.__name__,
         )
+        return ""
         # TODO: Implement.
 
     # TODO: Verify calls to deprecated methods `log_event()` and `log()` on
@@ -125,19 +138,27 @@ class ScopeShim(opentracing.Scope):
     accept a `SpanShim` object and wrap it in a `ScopeShim`.
     """
 
-    def __init__(self, manager, span=None, span_cm=None):
+    def __init__(
+        self,
+        manager: "ScopeManagerShim",
+        span: SpanShim,
+        span_cm: Iterator[None] = None,
+    ) -> None:
         super().__init__(manager, span)
         self._span_cm = span_cm
 
-        # If a span context manager is provided, extract the `Span` object from
-        # it, wrap the extracted span and save it as an attribute.
-        if self._span_cm is not None:
-            otel_span = self._span_cm.__enter__()
-            self._span = SpanShim(
-                self._manager.tracer, otel_span.get_context(), otel_span
-            )
+    # TODO: Change type of `manager` argument to `opentracing.ScopeManager`? We
+    # need to get rid of `manager.tracer` for this.
+    @classmethod
+    def from_context_manager(
+        cls, manager: "ScopeManagerShim", span_cm: Iterator[None]
+    ) -> "ScopeShim":
+        otel_span = span_cm.__enter__()
+        span_context = SpanContextShim(otel_span.get_context())
+        span = SpanShim(manager.tracer, span_context, otel_span)
+        return cls(manager, span, span_cm)
 
-    def close(self):
+    def close(self) -> None:
         if self._span_cm is not None:
             # We don't have error information to pass to `__exit__()` so we
             # pass `None` in all arguments. If the OpenTelemetry tracer
@@ -146,22 +167,27 @@ class ScopeShim(opentracing.Scope):
             # the relevant values to this `close()` method.
             self._span_cm.__exit__(None, None, None)
         else:
+            # Required to convince mypy that `self._span` is a `SpanShim`.
+            assert isinstance(self._span, SpanShim)
             self._span.unwrap().end()
 
 
 class ScopeManagerShim(opentracing.ScopeManager):
-    def __init__(self, tracer):
-        # The only thing the `__init__()` method on the base class does is
-        # initialize `self._noop_span` and `self._noop_scope` with no-op
-        # objects. Therefore, it doesn't seem useful to call it.
-        # pylint: disable=super-init-not-called
+    def __init__(self, tracer: "TracerShim") -> None:
+        super().__init__()
         self._tracer = tracer
 
-    def activate(self, span, finish_on_close):
-        span_cm = self._tracer.unwrap().use_span(
-            span.unwrap(), end_on_exit=finish_on_close
-        )
-        return ScopeShim(self, span_cm=span_cm)
+    def activate(
+        self, span: opentracing.Span, finish_on_close: bool
+    ) -> opentracing.Scope:
+        if isinstance(span, SpanShim):
+            span_cm = self._tracer.unwrap().use_span(
+                span.unwrap(), end_on_exit=finish_on_close
+            )
+            return ScopeShim.from_context_manager(self, span_cm)
+
+        logger.warning("activate() method doesn't support `Span` objects.")
+        return self._noop_scope
 
     @property
     def active(self):
@@ -182,25 +208,31 @@ class ScopeManagerShim(opentracing.ScopeManager):
 
 
 class TracerShim(opentracing.Tracer):
-    def __init__(self, tracer, scope_manager=None):
+    def __init__(
+        self,
+        tracer: trace.Tracer,
+        scope_manager: opentracing.ScopeManager = None,
+    ) -> None:
         scope_manager = ScopeManagerShim(self)
         super().__init__(scope_manager=scope_manager)
         self._otel_tracer = tracer
 
-    def unwrap(self):
+    def unwrap(self) -> trace.Tracer:
         """Returns the wrapped OpenTelemetry `Tracer` object."""
 
         return self._otel_tracer
 
     def start_active_span(
         self,
-        operation_name,
-        child_of=None,
-        references=None,
-        tags=None,
-        start_time=None,
-        ignore_active_span=False,
-        finish_on_close=True,
+        operation_name: str,
+        child_of: Optional[
+            Union[opentracing.Span, opentracing.SpanContext]
+        ] = None,
+        references: Optional[List[opentracing.Reference]] = None,
+        tags: Optional[Dict[str, Union[str, bool, int, float]]] = None,
+        start_time: Optional[float] = None,
+        ignore_active_span: Optional[bool] = False,
+        finish_on_close: bool = True,
     ) -> opentracing.Scope:
         span = self.start_span(
             operation_name=operation_name,
@@ -264,3 +296,7 @@ class TracerShim(opentracing.Tracer):
             self.__class__.__name__,
         )
         # TODO: Implement.
+
+
+def create_tracer(tracer: trace.Tracer) -> TracerShim:
+    return TracerShim(tracer)

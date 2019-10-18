@@ -15,7 +15,9 @@
 from opentracing import ScopeManager, Span
 
 class Scope(object):
-    def __init__(self, manager: ScopeManager, span: Span) -> None: ...
+    def __init__(self, manager: ScopeManager, span: Span) -> None:
+        self._manager = manager
+        self._span = span
     @property
     def span(self) -> Span: ...
     @property
