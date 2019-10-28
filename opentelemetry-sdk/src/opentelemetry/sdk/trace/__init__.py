@@ -16,6 +16,8 @@
 import logging
 import random
 import threading
+import stapsdt
+
 from contextlib import contextmanager
 from typing import Iterator, Optional, Sequence, Tuple
 
@@ -31,6 +33,14 @@ logger = logging.getLogger(__name__)
 MAX_NUM_ATTRIBUTES = 32
 MAX_NUM_EVENTS = 128
 MAX_NUM_LINKS = 32
+
+provider = stapsdt.Provider("pythonapp")
+probe_span_start = provider.add_probe(
+    "spanStart", stapsdt.ArgTypes.uint64)
+probe_span_end = provider.add_probe(
+    "spanEnd", stapsdt.ArgTypes.uint64)
+provider.load()
+
 
 
 class SpanProcessor:
@@ -252,6 +262,7 @@ class Span(trace_api.Span):
 
     def start(self, start_time: Optional[int] = None) -> None:
         with self._lock:
+            probe_span_start.fire(self.context.span_id)
             if not self.is_recording_events():
                 return
             has_started = self.start_time is not None
@@ -266,6 +277,7 @@ class Span(trace_api.Span):
 
     def end(self, end_time: int = None) -> None:
         with self._lock:
+            probe_span_end.fire(self.context.span_id)
             if not self.is_recording_events():
                 return
             if self.start_time is None:
